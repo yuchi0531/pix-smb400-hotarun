@@ -704,7 +704,7 @@ int main(int argc, char **argv) {
      *
      * A 10-second wall-clock deadline is enforced via poll() so that channels
      * with no ECMs (FTA) or a slow/unlocked tuner do not stall the pipeline
-     * past Mirakurun's 20-second service-scan timeout. */
+     * past Hotarun's 20-second service-scan timeout. */
 #define PRESCAN_TIMEOUT_MS 10000
     fprintf(stderr, "b61dec: pre-scanning for first ECM...\n");
     while (!have_keys && buf_len < PRESCAN_SIZE) {

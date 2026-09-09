@@ -1,5 +1,5 @@
 #!/bin/bash
-# setup_proot.sh — one-time setup of Alpine Linux ARM + Node.js on SMB400.
+# setup_proot.sh — one-time setup of Alpine Linux ARM + gcompat on SMB400.
 #
 # Run from the development host (requires ADB connection to device):
 #   make setup-runtime ADB_TARGET=<device-ip>:5555
@@ -7,9 +7,11 @@
 # What this does:
 #   1. Downloads the Alpine Linux ARM minimal rootfs
 #   2. Pushes it to /data/local/tmp/ on the device and extracts it
-#   3. chroots into the rootfs (adb is root) and installs Node.js + npm via apk
+#   3. chroots into the rootfs (adb is root) and installs gcompat via apk
+#      (Hotarun's latest release binary `hotarun-linux-arm32` is
+#      armv7-unknown-linux-gnueabihf/glibc, so Alpine/musl needs gcompat)
 #
-# The runtime (start_mirakurun.sh) also uses chroot, so no proot is needed.
+# The runtime (start_hotarun.sh) also uses chroot, so no proot is needed.
 
 set -euo pipefail
 
@@ -21,7 +23,7 @@ else
 fi
 
 DEVICE_TMP=/data/local/tmp
-ROOTFS_DIR="$DEVICE_TMP/mirakurun-root"
+ROOTFS_DIR="$DEVICE_TMP/hotarun-root"
 WORK_DIR=$(mktemp -d)
 trap "rm -rf '$WORK_DIR'" EXIT
 
@@ -44,15 +46,15 @@ $ADB shell "rm '$DEVICE_TMP/alpine-rootfs.tar'"
 echo "=== Step 3: Configure Alpine DNS ==="
 $ADB shell "echo 'nameserver 8.8.8.8' > '$ROOTFS_DIR/etc/resolv.conf'"
 
-echo "=== Step 4: Install Node.js + npm inside chroot ==="
+echo "=== Step 4: Install gcompat inside chroot (for Hotarun glibc binary) ==="
 # adb runs as root, so we chroot directly (same mechanism as the runtime).
 # proc + /dev are needed for apk (TLS uses /dev/urandom).
 $ADB shell '
 set -e
-ROOTFS=/data/local/tmp/mirakurun-root
+ROOTFS=/data/local/tmp/hotarun-root
 mount -t proc proc "$ROOTFS/proc" 2>/dev/null || true
 mount -o bind /dev "$ROOTFS/dev"  2>/dev/null || true
-chroot "$ROOTFS" /bin/sh -c "export PATH=/usr/sbin:/usr/bin:/sbin:/bin; apk update && apk add nodejs npm"
+chroot "$ROOTFS" /bin/sh -c "export PATH=/usr/sbin:/usr/bin:/sbin:/bin; apk update && apk add gcompat libstdc++"
 RC=$?
 umount "$ROOTFS/dev"  2>/dev/null || true
 umount "$ROOTFS/proc" 2>/dev/null || true
@@ -61,5 +63,5 @@ exit $RC
 
 echo ""
 echo "=== Setup complete ==="
-echo "Node.js version:"
-$ADB shell "chroot '$ROOTFS_DIR' /bin/sh -c 'export PATH=/usr/sbin:/usr/bin:/sbin:/bin; node --version'"
+echo "Hotarun preflight (Alpine + gcompat ready):"
+$ADB shell "chroot '$ROOTFS_DIR' /bin/sh -c 'export PATH=/usr/sbin:/usr/bin:/sbin:/bin; ls /lib/libgcompat* 2>/dev/null || echo gcompat-installed'"

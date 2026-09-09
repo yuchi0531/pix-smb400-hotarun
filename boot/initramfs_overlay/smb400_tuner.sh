@@ -1,7 +1,7 @@
 #!/system/bin/sh
-# smb400-tuner.sh — tuner command wrapper for Mirakurun on SMB400.
+# smb400-tuner.sh — tuner command wrapper for Hotarun on SMB400.
 #
-# Usage (invoked by Mirakurun via tuners.yml):
+# Usage (invoked by Hotarun via tuners.yml):
 #   smb400-tuner.sh <channel>
 #
 # Channel format determines operating mode:
@@ -10,7 +10,7 @@
 #   BS4K: integer ≥40000   → tuner-stream-bs-ng | b61dec (descrambled TLV, ISDB-S3)
 #
 # BS4K descrambling note:
-#   Scrambled TLV is unreadable by Mirakurun's TLVFilter → we descramble here,
+#   Scrambled TLV is unreadable by Hotarun's TLV handling → we descramble here,
 #   inside the tuner command, before output.  tuners.yml sets tlvDecoder: null.
 #   b61dec and tuner-stream-bs-ng run via chroot /proc/1/root to access the
 #   Android linker paths required by libstationtv_*/libhi_msp.

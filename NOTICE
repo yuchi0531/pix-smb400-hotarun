@@ -1,4 +1,4 @@
-PIX-SMB400 BS4K Mirakurun setup
+PIX-SMB400 BS4K Hotarun setup
 Copyright 2026 tsuyopon123
 
 Licensed under the Apache License, Version 2.0 (see LICENSE).
@@ -23,6 +23,8 @@ License 2.0 and retain their original copyright headers:
 Related components (NOT bundled — deployed/built separately)
 ------------------------------------------------------------------------
 
-  Mirakurun (Apache-2.0)  — cloned and built by the user during setup.
+  Hotarun (MIT) — prebuilt ARM32 binary fetched from the latest GitHub
+                         Release during setup (no version pin):
+                         https://github.com/yuchi0531/Hotarun/releases/latest/download/hotarun-linux-arm32
   OpenSSL libssl/libcrypto — linked at runtime from the device's own
                              Android system libraries (not redistributed).

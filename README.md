@@ -1,6 +1,6 @@
-# PIX-SMB400 Mirakurun
+# PIX-SMB400 Hotarun
 
-PIX-SMB400（HiSilicon Hi3798CV200 搭載 Android TV）上で Mirakurun を実行し、地上波（ISDB-T）・BS（ISDB-S）・BS4K / BS8K（ISDB-S3）を受信するためのプロジェクトです。
+PIX-SMB400（HiSilicon Hi3798CV200 搭載 Android TV）上で Hotarun（[yuchi0531/Hotarun](https://github.com/yuchi0531/Hotarun)、Mirakurun/MMirakurun 互換の軽量チューナーサーバー）を実行し、地上波（ISDB-T）・BS（ISDB-S）・BS4K / BS8K（ISDB-S3）を受信するためのプロジェクトです。
 
 <img width="1052" height="822" alt="image" src="https://github.com/user-attachments/assets/fd564f7a-a7b6-4b5c-941d-a226162a170c" />
 
@@ -26,14 +26,14 @@ Part 1: USB ブートで root を取る
   Step 2  PIX-SMB400 を USB ブートで起動する
   Step 3  ADB で接続確認する
 
-Part 2: Mirakurun のセットアップ
-  Step 4  Alpine Linux + Node.js をセットアップする
-  Step 5  Mirakurun をデプロイする
+Part 2: Hotarun のセットアップ
+  Step 4  Alpine Linux + gcompat をセットアップする
+  Step 5  Hotarun をデプロイする
   Step 6  バイナリをビルドしてデプロイする
   Step 7  ACAS マスターキーを設定する
 
 Part 3: 起動・確認
-  Step 8  Mirakurun を起動する
+  Step 8  Hotarun を起動する
   Step 9  BS4K ストリームを確認する
 ```
 
@@ -62,7 +62,7 @@ VS Code の **Dev Containers** 拡張、または GitHub Codespaces で「Reopen
 - `binwalk` + `cpio` — `kernel.img` から initramfs cpio を展開（[Step 0](#step-0-kernelimg-を入手して展開する)）
 - `adb` — デバイスとのバイナリ転送・android-libs 取得
 - `python3-pycryptodome` — `make_usb_boot.py`（`bootargs.bin` / RSA 鍵生成）
-- `nodejs` / `npm` / `git` / `curl` — Mirakurun-BS4K のクローン・ビルド・デプロイ
+- `curl` / `git` / `ca-certificates` — Hotarun 最新リリースの取得・デプロイ
 - **docker-in-docker** feature — `build_initramfs.sh` / `make_usb_boot.py` がコンテナ内で `docker run` を使うため有効化済み
 
 > 以降の手順に出てくる `sudo apt install ...`（`gcc-arm-linux-gnueabi`・`libssl-dev`・`binwalk` 等）は、
@@ -89,17 +89,18 @@ VS Code の **Dev Containers** 拡張、または GitHub Codespaces で「Reopen
 │   └── initramfs_overlay/           initramfs オーバーレイファイル
 ├── bin/                             ビルドしたバイナリの出力先（make build-bins で生成）
 ├── include/openssl/                 b61dec ビルド用 OpenSSL 設定ヘッダ
-├── patches/                         デプロイ時に適用するパッチ（@node-rs/crc32 の JS シム）
+├── patches/                         旧 Mirakurun 用パッチ置き場（Hotarun では未使用・歴史的経緯のみ）
 ├── scripts/
-│   ├── smb400-tuner.sh              Mirakurun チューナーコマンドラッパー
-│   ├── start_mirakurun.sh           Mirakurun 起動スクリプト（手動実行用）
+│   ├── smb400-tuner.sh              Hotarun チューナーコマンドラッパー
+│   ├── start_hotarun.sh             Hotarun 起動スクリプト（手動実行用）
+│   ├── fetch-hotarun.sh             Hotarun 最新リリース取得（バージョン固定なし）
 │   ├── stop_android_tv.sh           Android TV 不要プロセス停止
 │   ├── crash_guard.sh               クラッシュ監視ウォッチドッグ
-│   └── setup_proot.sh               Alpine + Node.js 初回セットアップ
+│   └── setup_proot.sh               Alpine + gcompat 初回セットアップ
 ├── config/
-│   ├── tuners.yml                   Mirakurun チューナー設定
+│   ├── tuners.yml                   Hotarun チューナー設定（Mirakurun 互換、ポート 40772 維持）
 │   ├── channels.yml                 BS / BS4K / BS8K チャンネル一覧
-│   └── server.yml                   Mirakurun サーバー設定
+│   └── server.yml                   Hotarun サーバー設定（Mirakurun 互換、ポート 40772 維持）
 └── src/                             バイナリの C ソースコード（make build-bins でビルド）
     ├── b61dec.c                     ACAS BS4K / BS8K デスクランブラー（ARIB STD-B61 / AES）
     ├── b21dec.c                     地上波 / BS MULTI2 デスクランブラー（ACAS 経由 / ARIB STD-B25）
@@ -237,15 +238,15 @@ adb -s <デバイスのIPアドレス>:5555 shell id
 
 ---
 
-## Part 2: Mirakurun のセットアップ
+## Part 2: Hotarun のセットアップ
 
-> セットアップ以降は USB メモリを挿入して電源を入れるだけで、`mirakurun_proxy` サービスが起動時に Mirakurun を自動起動します（`make start` は不要）。
+> セットアップ以降は USB メモリを挿入して電源を入れるだけで、`hotarun_proxy` サービスが起動時に Hotarun を自動起動します（`make start` は不要）。
 > ただし、安全のためクラッシュ時の自動再起動はしません。
 > 停止した場合は `make start` か再起動で復帰してください。
 
 ---
 
-### Step 4: Alpine Linux + Node.js をセットアップする
+### Step 4: Alpine Linux + gcompat をセットアップする
 
 デバイスにインターネット接続が必要です。コマンドはリポジトリのルートで実行します。
 
@@ -253,34 +254,45 @@ adb -s <デバイスのIPアドレス>:5555 shell id
 make setup-runtime ADB_TARGET=<デバイスのIPアドレス>:5555
 ```
 
-Alpine ARM32 minirootfs のダウンロードと Node.js のインストールを自動で行います。
+Alpine ARM32 minirootfs のダウンロードと gcompat（Hotarun の glibc バイナリ用）のインストールを自動で行います。
 完了まで 3〜5 分かかります。
 
 完了確認:
 
 ```sh
 adb -s <デバイスのIPアドレス>:5555 shell \
-  "chroot /data/local/tmp/mirakurun-root /bin/sh -c \
-   'export PATH=/usr/sbin:/usr/bin:/sbin:/bin; node --version'"
-# → v20.x.x などが返ること
+  "chroot /data/local/tmp/hotarun-root /bin/sh -c \
+   'export PATH=/usr/sbin:/usr/bin:/sbin:/bin; ls /lib/libgcompat*'"
+# → /lib/libgcompat.so.0 などが返ること
 ```
 
 ---
 
-### Step 5: Mirakurun をデプロイする
+### Step 5: Hotarun をデプロイする
 
-PC 側で Mirakurun をビルドしてからデバイスに転送します。
+Hotarun の最新リリースバイナリ（ARM32）を GitHub から取得してデバイスに転送します。
+バージョンはピン留めせず、常に `latest` リリースを使います（Hotarun はリリース番号によらない固定ファイル名で配布）。
+
+- リポジトリ: [yuchi0531/Hotarun](https://github.com/yuchi0531/Hotarun)
+- バイナリ: `hotarun-linux-arm32`（ARMv7 hard-float）+ `.sha256`
+- 取得元: `https://github.com/yuchi0531/Hotarun/releases/latest/download/hotarun-linux-arm32`
 
 ```sh
-# リポジトリのルートに tmp/ を作ってクローン・ビルド
-git clone https://github.com/tsuyopon123/Mirakurun-BS4K.git tmp/Mirakurun-BS4K
-cd tmp/Mirakurun-BS4K && npm install && npm run build && cd ../..
+# 最新リリースを取得・SHA-256 検証（tmp/hotarun-linux-arm32 に保存）
+make fetch-hotarun
+
+# または直接確認する場合:
+# curl -fL -o tmp/hotarun-linux-arm32 https://github.com/yuchi0531/Hotarun/releases/latest/download/hotarun-linux-arm32
+# curl -fL -o tmp/hotarun-linux-arm32.sha256 https://github.com/yuchi0531/Hotarun/releases/latest/download/hotarun-linux-arm32.sha256
+# (cd tmp && sha256sum -c hotarun-linux-arm32.sha256)
+# chmod +x tmp/hotarun-linux-arm32
 
 # デバイスにデプロイ
-make deploy-mirakurun ADB_TARGET=<デバイスのIPアドレス>:5555
+make deploy-hotarun ADB_TARGET=<デバイスのIPアドレス>:5555
 ```
 
-Mirakurun のコードと設定ファイルがデバイスの `/data/local/tmp/mirakurun/` にコピーされます。
+Hotarun のバイナリと設定ファイルがデバイスの `/data/local/tmp/hotarun/` にコピーされます。
+`config/*.yml`（`tuners.yml` / `channels.yml` / `server.yml`）は Mirakurun 互換のため内容はそのまま利用し、ポート `40772` も変更していません。
 
 ---
 
@@ -309,7 +321,7 @@ make push-all ADB_TARGET=<デバイスのIPアドレス>:5555
 - `bin/tuner-stream-bs` — BS チューナー（mode=1）
 - `bin/b21dec` — 地上波 / BS デスクランブラー（ACAS 経由 / MULTI2）
 - `scripts/*.sh` — 各種スクリプト
-- `config/*.yml` — Mirakurun 設定
+- `config/*.yml` — Hotarun 設定（Mirakurun 互換、ポート 40772 維持）
 
 > 設定やスクリプトを更新した場合は `make push-all` だけ再実行します。
 > バイナリ自体を変更した場合は `make build-bins` から実行します。
@@ -335,7 +347,7 @@ wc -c /data/local/tmp/.acas_key
 
 ## Part 3: 起動・確認
 
-### Step 8: Mirakurun を起動する
+### Step 8: Hotarun を起動する
 
 ```sh
 make start ADB_TARGET=<デバイスのIPアドレス>:5555
@@ -397,11 +409,11 @@ ffplay http://<デバイスのIPアドレス>:40772/api/channels/BS4K/45280/stre
 
 地上波デジタル（ISDB-T）にも対応しています。
 地デジも BS と同じ **MULTI2**（B-CAS 方式, CA_system_id 0x0005）でスクランブルされているため、`smb400-tuner.sh` 内の **`b21dec`** がオンデバイス ACAS チップ経由でそのまま解除します（B-CAS カード不要）。
-チューナーは `tuner-stream-ng`（DMX 直接キャプチャ）を使い、`tuner-stream-ng | b21dec` を chroot 配下で実行して平文 MPEG-TS を出力します（Mirakurun 標準 TSFilter で処理）。
+チューナーは `tuner-stream-ng`（DMX 直接キャプチャ）を使い、`tuner-stream-ng | b21dec` を chroot 配下で実行して平文 MPEG-TS を出力します（Hotarun 標準 TSFilter で処理）。
 
 `config/channels.yml` の GR 一覧は **関東（東京）の物理チャンネル例**です。
 物理チャンネル割り当ては地域で異なるため、お住まいの地域に合わせて `channel`（13〜62）を変更してください。
-`serviceId` は省略してあり、Mirakurun のサービススキャンが各局を自動登録します。
+`serviceId` は省略してあり、Hotarun のチャンネルスキャンが各局を自動登録します。
 
 | name | type | channel(物理) |
 |------|------|---------------|
@@ -439,7 +451,7 @@ BS4K の `b61dec`（ACAS-RMP / AES）とは別系統で、ACAS チップの**従
 - channel は `BSxx_y`（xx=トランスポンダ番号, y=ストリーム）形式で、`smb400-tuner.sh` が IF = `1049480 + (xx-1)/2 × 38360` kHz を算出して `tuner-stream-bs`（mode=1）でロックします。
 - `b21dec` は **ACAS マスターキー不要**です（放送局のワークキー Kw は、過去の実放送受信時に EMM 経由でチップへ書き込まれた契約情報を利用するため）。
   逆に、当該局の契約・受信履歴が無いチップでは ECM 応答が「視聴不可」となり復号できません。
-- 出力は平文 MPEG-TS なので Mirakurun の標準 TSFilter で処理されます（`tlvDecoder` 不要）。
+- 出力は平文 MPEG-TS なので Hotarun の標準 TSFilter で処理されます（`tlvDecoder` 不要）。
 - ストリーム確認・視聴:
 
 ```sh
@@ -465,13 +477,13 @@ BS4K に対応した EPGStation フォークを使うと、Web UI から録画�
 
 - リポジトリ: [tsuyopon123/EPGStation](https://github.com/tsuyopon123/EPGStation)
 
-EPGStation をセットアップする際に `mirakurunPath` を `http://<デバイスのIPアドレス>:40772/` に設定してください。
+EPGStation をセットアップする際に `mirakurunPath`（Hotarun は Mirakurun 互換 API のため項目名はそのまま）を `http://<デバイスのIPアドレス>:40772/` に設定してください。
 
 ---
 
 ## サービス登録と EPG について
 
-初回起動後、Mirakurun は `channels.yml` で `serviceId` を指定した各チャンネルを順次チューニングしてサービスを自動登録します。
+初回起動後、Hotarun は `channels.yml` で `serviceId` を指定した各チャンネルを順次チューニングしてサービスを自動登録します。
 **全チャンネルが揃うまで数分**かかります（1 チューナーで順番にチューニングするため）。
 
 ```sh
@@ -479,19 +491,19 @@ EPGStation をセットアップする際に `mirakurunPath` を `http://<デバ
 curl -s http://<デバイスのIPアドレス>:40772/api/services | python3 -m json.tool
 ```
 
-- サービスが登録されると、それを対象に **EPG Gatherer / Service Updater** が動き出します（登録サービスが 0 件のうちは、これらのジョブは対象が無いため即終了します）。
+- Hotarun 自身は EPG 収集・録画を行いません（録画・番組表は EPGStation 側で行う）。サービス一覧は Hotarun のチャンネルスキャン（GR / BS / CS / BS4K、1 論理チャンネル 20 秒タイムアウト）で検出・保存します。
 - トランスポンダの初回チューニング時、ウォームアップで稀にサービスを取り逃すことがあります（ストリーム先頭の `7f ff`）。
-  その場合は `make start` で再起動すれば取得されます（登録済みサービスは DB から復元されるため再チューニングされません）。
+  その場合は `make start` で再起動すれば取得されます。
 
-> **再起動について**: Web UI の Restart ボタンはこの構成（pm2／Docker なし）では使えず 500 を返します。
-> 再起動はホストから `make restart` を使ってください。
+> **再起動について**: 設定保存後は Hotarun の再起動が必要です（設定のホットリロードなし）。
+> 再起動はホストから `make restart` を使ってください（`/api/config/restart` 受け付け後は daemon が graceful shutdown して設定を読み直します）。
 
 ---
 
 ## コマンド
 
 ```sh
-make start    # Mirakurun 起動
+make start    # Hotarun 起動
 make stop     # 停止（チューナー・デスクランブラーも含む）
 make restart  # 再起動
 make log      # ログ確認（最新 50 行）
@@ -511,7 +523,7 @@ make start ADB_TARGET=192.168.1.100:5555
 OEM チューナーサービス（`pix_airtuner`）が起動中は ACAS を占有するため、
 `b61dec` が失敗します（`GetCkc failed: -4`）。
 
-`start_mirakurun.sh` は起動時に自動で停止します。
+`start_hotarun.sh` は起動時に自動で停止します。
 再起動後に OEM サービスが復帰した場合は手動で停止:
 
 ```sh
@@ -524,9 +536,9 @@ adb -s <デバイスのIPアドレス>:5555 shell "stop pix_airtuner; stop airtu
 
 - `crash_dump32` フォーク爆弾（Android 8 のクラッシュダンプ暴走）
 - MemAvailable < 600 MB → `stop_android_tv.sh` で Android TV アプリを回収（2 分クールダウン）
-- MemAvailable < 350 MB → Node.js を強制終了（最終手段）
+- MemAvailable < 350 MB → Hotarun を強制終了（最終手段）
 
-Node.js のヒープは `--max-old-space-size=256` で制限されています。
+Hotarun は Rust 製シングルバイナリのため Node.js ヒープ制限は不要です。
 
 ### USB Boot ファイルのビルド
 

@@ -23,9 +23,9 @@ on post-fs-data
     chmod 0755 /data/local/tmp/stop_android_tv.sh
     copy /smb400_tuner.sh    /data/local/tmp/smb400-tuner.sh
     chmod 0755 /data/local/tmp/smb400-tuner.sh
-    # Ensure /run and /var/run exist in Alpine rootfs so Node.js can bind the socket
-    mkdir /data/local/tmp/mirakurun-root/run 0755 root root
-    mkdir /data/local/tmp/mirakurun-root/var/run 0755 root root
+    # Ensure /run and /var/run exist in Alpine rootfs so Hotarun can bind the socket
+    mkdir /data/local/tmp/hotarun-root/run 0755 root root
+    mkdir /data/local/tmp/hotarun-root/var/run 0755 root root
 
 on boot
     # Start Ethernet DHCP setup (delayed for PHY init)
@@ -51,9 +51,9 @@ service rootconsole /system/bin/sh
     seclabel u:r:su:s0
 
 on property:sys.boot_completed=1
-    start mirakurun_proxy
+    start hotarun_proxy
 
-service mirakurun_proxy /system/bin/sh /data/local/tmp/start_proxy.sh
+service hotarun_proxy /system/bin/sh /data/local/tmp/start_proxy.sh
     user root
     group root
     disabled

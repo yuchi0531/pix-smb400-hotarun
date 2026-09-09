@@ -6,10 +6,10 @@
 // uses only `crc32` here (PNG logo chunk CRCs); TS/TLV CRC uses aribts' own
 // JS implementation. crc32c is provided for API parity.
 //
-// `make deploy-mirakurun` copies this file over
-//   $MIRAKURUN/node_modules/@node-rs/crc32/index.js
-// after pushing node_modules, so a fresh `npm install` never reintroduces the
-// broken native binding on the device.
+// Legacy note: this shim was for `make deploy-mirakurun` (Mirakurun-BS4K/Node.js).
+// Hotarun (https://github.com/yuchi0531/Hotarun) is a Rust single binary and
+// `make deploy-hotarun` no longer pushes node_modules, so this file is unused.
+// Kept for history only.
 
 function makeTable(poly) {
   const t = new Int32Array(256)

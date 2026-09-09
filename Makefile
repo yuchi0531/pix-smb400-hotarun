@@ -1,12 +1,14 @@
-# SMB400 Mirakurun-BS4K — デプロイ & 運用 Makefile
+# SMB400 Hotarun — デプロイ & 運用 Makefile
 #
 # 前提: デバイスが USB ブートで起動し ADB ルート取得済みであること。
-# 初回のみ: Alpine + Node.js セットアップ (setup-runtime) と
-#            Mirakurun JS デプロイ (deploy-mirakurun) が必要。
+# 初回のみ: Alpine + gcompat セットアップ (setup-runtime) と
+#            Hotarun バイナリのデプロイ (deploy-hotarun) が必要。
+#            Hotarun は https://github.com/yuchi0531/Hotarun の
+#            最新リリース (`releases/latest/download`) から取得する (バージョン固定なし)。
 #
 # 典型的な操作:
 #   make push-all           バイナリ・スクリプト・設定を一括更新
-#   make start              Mirakurun 起動
+#   make start              Hotarun 起動
 #   make stop               停止
 #   make log                ログ確認
 #   make test               BS4K ストリーム疎通確認
@@ -27,10 +29,17 @@ endif
 ADB        := adb -s $(ADB_TARGET)
 DEVICE_IP  := $(firstword $(subst :, ,$(ADB_TARGET)))
 DEVICE_TMP := /data/local/tmp
-MIRAKURUN  := $(DEVICE_TMP)/mirakurun
+HOTARUN    := $(DEVICE_TMP)/hotarun
 
-# Mirakurun-BS4K JS ソース（初回デプロイ時のみ使用）
-MIRAKURUN_SRC ?= tmp/Mirakurun-BS4K
+# Hotarun リリースバイナリ (ARM32, 初回デプロイ時のみ使用)
+# バージョンはピン留めせず、常に GitHub の latest リリースから取得する。
+# Hotarun は固定ファイル名で配布される (release.yml が v* タグで更新):
+#   https://github.com/yuchi0531/Hotarun/releases/latest/download/hotarun-linux-arm32
+HOTARUN_REPO     ?= yuchi0531/Hotarun
+HOTARUN_BIN_NAME ?= hotarun-linux-arm32
+HOTARUN_URL      ?= https://github.com/$(HOTARUN_REPO)/releases/latest/download/$(HOTARUN_BIN_NAME)
+HOTARUN_SHA_URL  ?= $(HOTARUN_URL).sha256
+HOTARUN_BIN      ?= tmp/$(HOTARUN_BIN_NAME)
 
 # バイナリビルド設定
 # 要件: gcc-arm-linux-gnueabi（sudo apt install gcc-arm-linux-gnueabi）
@@ -49,7 +58,7 @@ CFLAGS_ARM   := -march=armv7-a -mfloat-abi=softfp -mfpu=vfpv3 \
 
 .PHONY: build-bins android-libs \
         push-all push-bins push-scripts push-config \
-        deploy-mirakurun setup-runtime \
+        fetch-hotarun deploy-hotarun setup-runtime \
         start stop restart log test help
 
 # ---- ビルド (src/ → bin/) ----
@@ -117,43 +126,43 @@ push-bins:
 push-scripts:
 	@echo "[*] Pushing scripts..."
 	$(ADB) push scripts/smb400-tuner.sh    $(DEVICE_TMP)/smb400-tuner.sh
-	$(ADB) push scripts/start_mirakurun.sh $(DEVICE_TMP)/start_mirakurun.sh
+	$(ADB) push scripts/start_hotarun.sh   $(DEVICE_TMP)/start_hotarun.sh
 	$(ADB) push scripts/stop_android_tv.sh $(DEVICE_TMP)/stop_android_tv.sh
 	$(ADB) push scripts/crash_guard.sh     $(DEVICE_TMP)/crash_guard.sh
 	$(ADB) shell chmod +x \
 	    $(DEVICE_TMP)/smb400-tuner.sh \
-	    $(DEVICE_TMP)/start_mirakurun.sh \
+	    $(DEVICE_TMP)/start_hotarun.sh \
 	    $(DEVICE_TMP)/stop_android_tv.sh \
 	    $(DEVICE_TMP)/crash_guard.sh
 
 push-config:
 	@echo "[*] Pushing config..."
-	$(ADB) shell mkdir -p $(MIRAKURUN)/config
-	$(ADB) push config/tuners.yml   $(MIRAKURUN)/config/tuners.yml
-	$(ADB) push config/channels.yml $(MIRAKURUN)/config/channels.yml
-	$(ADB) push config/server.yml   $(MIRAKURUN)/config/server.yml
+	$(ADB) shell mkdir -p $(HOTARUN)/config
+	$(ADB) push config/tuners.yml   $(HOTARUN)/config/tuners.yml
+	$(ADB) push config/channels.yml $(HOTARUN)/config/channels.yml
+	$(ADB) push config/server.yml   $(HOTARUN)/config/server.yml
 
 push-all: push-bins push-scripts push-config
-	@echo "[+] Done. Run 'make start' to launch Mirakurun."
+	@echo "[+] Done. Run 'make start' to launch Hotarun."
 
-# 初回のみ: Mirakurun-BS4K JS ファイル一式をデプロイ
-# $(MIRAKURUN_SRC) を GitHub からクローンしてビルド済みであること。
-deploy-mirakurun:
-	@echo "[*] Deploying Mirakurun JS to device..."
-	$(ADB) shell mkdir -p $(MIRAKURUN)/config $(MIRAKURUN)/db $(MIRAKURUN)/logo-data
-	$(ADB) push $(MIRAKURUN_SRC)/lib/          $(MIRAKURUN)/lib/
-	$(ADB) push $(MIRAKURUN_SRC)/node_modules/ $(MIRAKURUN)/node_modules/
-	$(ADB) push $(MIRAKURUN_SRC)/package.json  $(MIRAKURUN)/package.json
-	$(ADB) push $(MIRAKURUN_SRC)/api.yml       $(MIRAKURUN)/api.yml
-	@echo "[*] Applying @node-rs/crc32 JS shim (no musl-arm native build)..."
-	$(ADB) push patches/node-rs-crc32-index.js \
-	    $(MIRAKURUN)/node_modules/@node-rs/crc32/index.js
-	$(ADB) push config/tuners.yml   $(MIRAKURUN)/config/tuners.yml
-	$(ADB) push config/channels.yml $(MIRAKURUN)/config/channels.yml
-	$(ADB) push config/server.yml   $(MIRAKURUN)/config/server.yml
-	@echo "[+] Mirakurun JS deployed."
+# Hotarun 最新リリースバイナリ (ARM32) を取得 (バージョン固定なし)
+# scripts/fetch-hotarun.sh が releases/latest/download から取得・SHA-256 検証する。
+fetch-hotarun:
+	bash scripts/fetch-hotarun.sh $(dir $(HOTARUN_BIN))
 
-# 初回のみ: Alpine ARM32 + Node.js をデバイスに構築（インターネット接続必要）
+# 初回のみ: Hotarun バイナリ一式をデプロイ
+# `make fetch-hotarun` で取得した最新バイナリをデバイスへ転送する。
+deploy-hotarun: fetch-hotarun
+	@echo "[*] Deploying Hotarun binary to device..."
+	$(ADB) shell mkdir -p $(HOTARUN)/config
+	$(ADB) push $(HOTARUN_BIN) $(HOTARUN)/hotarun
+	$(ADB) shell chmod +x $(HOTARUN)/hotarun
+	$(ADB) push config/tuners.yml   $(HOTARUN)/config/tuners.yml
+	$(ADB) push config/channels.yml $(HOTARUN)/config/channels.yml
+	$(ADB) push config/server.yml   $(HOTARUN)/config/server.yml
+	@echo "[+] Hotarun deployed."
+
+# 初回のみ: Alpine ARM32 + gcompat をデバイスに構築（インターネット接続必要）
 setup-runtime:
 	bash scripts/setup_proot.sh $(ADB_TARGET)
 
@@ -161,35 +170,34 @@ setup-runtime:
 
 start:
 	@echo "[*] Stopping any existing session..."
-	-$(ADB) shell "pkill -9 Mirakurun 2>/dev/null; \
-	    kill -9 \$$(pgrep -f 'start_mirakurun[.]sh' 2>/dev/null) 2>/dev/null; \
+	-$(ADB) shell "pkill -9 hotarun 2>/dev/null; \
+	    kill -9 \$$(pgrep -f 'start_hotarun[.]sh' 2>/dev/null) 2>/dev/null; \
 	    pkill -9 b61dec 2>/dev/null; pkill -9 tunertest 2>/dev/null; true"
 	@sleep 2
-	@echo "[*] Starting Mirakurun..."
-	$(ADB) shell "setsid sh $(DEVICE_TMP)/start_mirakurun.sh \
-	    >> $(DEVICE_TMP)/mirakurun.log 2>&1 &"
+	@echo "[*] Starting Hotarun..."
+	$(ADB) shell "setsid sh $(DEVICE_TMP)/start_hotarun.sh \
+	    >> $(DEVICE_TMP)/hotarun.log 2>&1 &"
 	@echo "[*] 起動を待っています（最大 ~60 秒）..."
 	@ok=0; for i in $$(seq 1 30); do \
 	    if curl -s --max-time 5 http://$(DEVICE_IP):40772/api/version >/dev/null 2>&1; then ok=1; break; fi; \
 	    sleep 2; \
 	done; \
 	if [ $$ok = 1 ]; then \
-	    printf "[+] Mirakurun is up: "; curl -s --max-time 5 http://$(DEVICE_IP):40772/api/version; echo; \
+	    printf "[+] Hotarun is up: "; curl -s --max-time 5 http://$(DEVICE_IP):40772/api/version; echo; \
 	else \
 	    echo "(まだ応答がありません — 'make log' で確認してください)"; \
 	fi
 
 stop:
-	-$(ADB) shell "pkill -9 Mirakurun 2>/dev/null; \
-	    kill -9 \$$(pgrep -f 'start_mirakurun[.]sh' 2>/dev/null) 2>/dev/null; \
-	    pkill -9 -f 'node.*server\.js' 2>/dev/null; \
+	-$(ADB) shell "pkill -9 hotarun 2>/dev/null; \
+	    kill -9 \$$(pgrep -f 'start_hotarun[.]sh' 2>/dev/null) 2>/dev/null; \
 	    pkill -9 b61dec 2>/dev/null; \
 	    pkill -9 b21dec 2>/dev/null; \
 	    pkill -9 tunertest 2>/dev/null; \
 	    pkill -9 -f tuner-stream 2>/dev/null; \
 	    sleep 1; true"
 	-$(ADB) shell " \
-	    grep mirakurun-root /proc/mounts | while read d mp r; do echo \"\$$mp\"; done | sort -r | \
+	    grep hotarun-root /proc/mounts | while read d mp r; do echo \"\$$mp\"; done | sort -r | \
 	    while read mp; do umount \"\$$mp\" 2>/dev/null || true; done; true"
 	@echo "Stopped."
 
@@ -198,7 +206,7 @@ restart: stop start
 # ---- 確認 ----
 
 log:
-	$(ADB) shell "tail -50 $(DEVICE_TMP)/mirakurun.log"
+	$(ADB) shell "tail -50 $(DEVICE_TMP)/hotarun.log"
 
 # BS4K 45168 から 5 秒受信して先頭バイトを表示
 # 正常: 7f 02 ... または 7f 03 ... (IPv4/IPv6 TLV コンテンツ)
@@ -212,7 +220,7 @@ test:
 
 help:
 	@echo ""
-	@echo "SMB400 Mirakurun-BS4K デプロイ Makefile"
+	@echo "SMB400 Hotarun デプロイ Makefile"
 	@echo ""
 	@echo "  make build-bins        src/ から bin/ のバイナリをビルド (初回のみ)"
 	@echo "  make android-libs      デバイスから Android システムライブラリを取得"
@@ -220,10 +228,11 @@ help:
 	@echo "  make push-bins         バイナリのみ (tuner-stream-bs-ng, b61dec)"
 	@echo "  make push-scripts      スクリプトのみ (smb400-tuner.sh 等)"
 	@echo "  make push-config       設定ファイルのみ (channels.yml 等)"
-	@echo "  make deploy-mirakurun  Mirakurun JS 一式をデプロイ (初回のみ)"
-	@echo "  make setup-runtime     Alpine + Node.js をデバイスに構築 (初回のみ)"
-	@echo "  make start             Mirakurun 起動"
-	@echo "  make stop              Mirakurun 停止"
+	@echo "  make fetch-hotarun     Hotarun 最新リリースを取得 (バージョン固定なし)"
+	@echo "  make deploy-hotarun    Hotarun バイナリ一式をデプロイ (初回のみ)"
+	@echo "  make setup-runtime     Alpine + gcompat をデバイスに構築 (初回のみ)"
+	@echo "  make start             Hotarun 起動"
+	@echo "  make stop              Hotarun 停止"
 	@echo "  make restart           再起動"
 	@echo "  make log               ログ確認 (tail -50)"
 	@echo "  make test              BS4K ストリーム疎通テスト"

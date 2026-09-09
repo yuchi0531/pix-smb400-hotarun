@@ -26,9 +26,11 @@ _*.extracted/
 firmware_extracted/
 
 # ---- Work dirs ----
-# Mirakurun-BS4K clone built during `make deploy-mirakurun`
+# Hotarun release binary fetched during `make fetch-hotarun` / `make deploy-hotarun`
+# (always from https://github.com/yuchi0531/Hotarun/releases/latest/download/, no pin)
 /tmp/
-node_modules/
+hotarun-linux-arm32
+hotarun-linux-arm32.sha256
 
 # ---- Python ----
 __pycache__/

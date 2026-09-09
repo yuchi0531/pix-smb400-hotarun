@@ -8,7 +8,7 @@ USB メモリには以下の 3 ファイルが必要です。いずれも `boot/
 |----------|------|----------|
 | `bootargs.bin` | u-boot 環境変数ブロック（`androidboot.selinux=permissive` を注入） | `make_usb_boot.py` |
 | `root_rsa_pub_crc.bin` | 外部 RSA 公開鍵。BootROM がこの鍵で `bootargs.bin` を検証する | `make_usb_boot.py` |
-| `initramfs_patched.uimg` | カスタム initramfs（ADB・DHCP・Mirakurun 自動起動を組み込み） | `build_initramfs.sh` |
+| `initramfs_patched.uimg` | カスタム initramfs（ADB・DHCP・Hotarun 自動起動を組み込み） | `build_initramfs.sh` |
 
 ---
 
@@ -228,7 +228,7 @@ ls -lh boot/initramfs_patched.uimg
 | ファイル | 用途 |
 |----------|------|
 | `init.pixboot.rc` | 起動時サービス定義。自動起動タイミングや追加コマンドを変更 |
-| `start_proxy.sh` | Mirakurun 自動起動スクリプト（電源 ON 時に実行される版） |
+| `start_proxy.sh` | Hotarun 自動起動スクリプト（電源 ON 時に実行される版） |
 | `smb400_tuner.sh` | チューナー制御スクリプト |
 | `default.prop` | デバッグプロパティ（変更不要） |
 

@@ -1,23 +1,27 @@
 #!/system/bin/sh
-# start_mirakurun.sh — start Mirakurun-BS4K on SMB400 via chroot + Alpine ARM32.
+# start_hotarun.sh — start Hotarun on SMB400 via chroot + Alpine ARM32.
 #
 # Requires root (ADB shell is root by default on SMB400).
-# Alpine rootfs + Node.js must be set up first (see setup_proot.sh / make setup-mirakurun-runtime).
+# Alpine rootfs + gcompat must be set up first (see setup_proot.sh).
+# Hotarun binary must be deployed first (see `make deploy-hotarun` which
+# fetches https://github.com/yuchi0531/Hotarun/releases/latest/download/hotarun-linux-arm32).
 
-ROOTFS=/data/local/tmp/mirakurun-root
-MIRAKURUN=/data/local/tmp/mirakurun
-LOG=/data/local/tmp/mirakurun.log
-PIDFILE=/data/local/tmp/mirakurun-start.pid
+ROOTFS=/data/local/tmp/hotarun-root
+HOTARUN_DIR=/data/local/tmp/hotarun
+HOTARUN_BIN=/data/local/tmp/hotarun/hotarun
+HOTARUN_CONFIG_DIR=/data/local/tmp/hotarun/config
+LOG=/data/local/tmp/hotarun.log
+PIDFILE=/data/local/tmp/hotarun-start.pid
 
-# --- Preflight: start only if the Mirakurun setup is fully present. ---
+# --- Preflight: start only if the Hotarun setup is fully present. ---
 # If anything required is missing we exit immediately WITHOUT stopping
 # Android TV, so a not-yet-provisioned device is left completely untouched.
 REQUIRED="
-$ROOTFS/usr/bin/node
-$MIRAKURUN/lib/server.js
-$MIRAKURUN/config/server.yml
-$MIRAKURUN/config/tuners.yml
-$MIRAKURUN/config/channels.yml
+$ROOTFS/bin/sh
+$HOTARUN_BIN
+$HOTARUN_CONFIG_DIR/server.yml
+$HOTARUN_CONFIG_DIR/tuners.yml
+$HOTARUN_CONFIG_DIR/channels.yml
 /data/local/tmp/tuner-stream-bs-ng
 /data/local/tmp/b61dec
 "
@@ -26,7 +30,7 @@ for f in $REQUIRED; do
     [ -e "$f" ] || missing="$missing $f"
 done
 if [ -n "$missing" ]; then
-    echo "[mirakurun] not starting — missing file(s):$missing" >> "$LOG"
+    echo "[hotarun] not starting — missing file(s):$missing" >> "$LOG"
     exit 1
 fi
 
@@ -34,7 +38,7 @@ fi
 if [ -f "$PIDFILE" ]; then
     existing=$(cat "$PIDFILE" 2>/dev/null)
     if [ -n "$existing" ] && kill -0 "$existing" 2>/dev/null; then
-        echo "[mirakurun] already running (pid=$existing), exiting." >> "$LOG"
+        echo "[hotarun] already running (pid=$existing), exiting." >> "$LOG"
         exit 0
     fi
 fi
@@ -42,7 +46,7 @@ echo $$ > "$PIDFILE"
 
 # ACAS master key is optional for startup but required for descrambling.
 if [ ! -s /data/local/tmp/.acas_key ]; then
-    echo "[mirakurun] warning: /data/local/tmp/.acas_key missing — streams will be scrambled." >> "$LOG"
+    echo "[hotarun] warning: /data/local/tmp/.acas_key missing — streams will be scrambled." >> "$LOG"
 fi
 
 # Free memory by stopping unused Android TV components (display, audio, camera,
@@ -52,9 +56,8 @@ export LOG
 sh /data/local/tmp/stop_android_tv.sh
 
 # Kill stale processes from a previous session.
-pkill -f "mirakurun-proxy" 2>/dev/null || true
-pkill -f "node.*server\.js" 2>/dev/null || true
-pkill -f "Mirakurun:" 2>/dev/null || true
+pkill -f "hotarun-proxy" 2>/dev/null || true
+pkill -f "hotarun" 2>/dev/null || true
 pkill -f "tunertest_oem" 2>/dev/null || true
 pkill -f "tunertest" 2>/dev/null || true
 pkill -f "tuner-stream" 2>/dev/null || true
@@ -65,7 +68,7 @@ mkdir -p "$ROOTFS/data/local/tmp" "$ROOTFS/system" "$ROOTFS/vendor"
 mkdir -p "$ROOTFS/proc" "$ROOTFS/sys" "$ROOTFS/dev"
 
 # Mount only if not already mounted (check by looking for a well-known file)
-if ! test -f "$ROOTFS/data/local/tmp/mirakurun/lib/server.js"; then
+if ! test -f "$ROOTFS/data/local/tmp/hotarun/hotarun"; then
     mount --bind /data/local/tmp "$ROOTFS/data/local/tmp" 2>/dev/null || true
 fi
 if ! test -d "$ROOTFS/system/bin"; then
@@ -90,10 +93,10 @@ mknod -m 666 "$ROOTFS/dev/tty" c 5 0 2>/dev/null || true
 rm -f "$ROOTFS/var/run" 2>/dev/null
 mkdir -p "$ROOTFS/var/run" "$ROOTFS/run"
 
-# Create Mirakurun data directories.
-mkdir -p "$MIRAKURUN/db" "$MIRAKURUN/logo-data" "$MIRAKURUN/config"
+# Create Hotarun data directories.
+mkdir -p "$HOTARUN_DIR/config"
 
-# --- Launch the brick-prevention watchdog (independent of Mirakurun) ---
+# --- Launch the brick-prevention watchdog (independent of Hotarun) ---
 # crash_guard kills crash_dump32 fork-bombs and frees memory before OOM.
 # Only start it if not already running.
 GUARD=/data/local/tmp/crash_guard.sh
@@ -107,36 +110,31 @@ if [ -f "$GUARD_PID" ]; then
 fi
 if [ "$guard_running" = 0 ]; then
     setsid sh "$GUARD" >> /data/local/tmp/crash_guard.log 2>&1 &
-    echo "[mirakurun] crash_guard watchdog launched (pid=$!)" >> "$LOG"
+    echo "[hotarun] crash_guard watchdog launched (pid=$!)" >> "$LOG"
 else
-    echo "[mirakurun] crash_guard already running (pid=$gp)" >> "$LOG"
+    echo "[hotarun] crash_guard already running (pid=$gp)" >> "$LOG"
 fi
 
-echo "[mirakurun] Starting Mirakurun-BS4K via chroot + Alpine ARM32..." >> "$LOG"
+echo "[hotarun] Starting Hotarun via chroot + Alpine ARM32..." >> "$LOG"
 
-# Ensure the mirakurun bind mount is present right before launch.
-if ! test -f "$ROOTFS/data/local/tmp/mirakurun/lib/server.js"; then
+# Ensure the hotarun bind mount is present right before launch.
+if ! test -f "$ROOTFS/data/local/tmp/hotarun/hotarun"; then
     mount --bind /data/local/tmp "$ROOTFS/data/local/tmp" 2>/dev/null || true
 fi
 
-# Run Mirakurun ONCE — intentionally NO restart loop.
+# Run Hotarun ONCE — intentionally NO restart loop.
 # On this device a crash-looping decoder can spawn a crash_dump32 fork-bomb
-# and brick the box, so we never auto-restart.  If node exits, we log and
+# and brick the box, so we never auto-restart.  If hotarun exits, we log and
 # stop; recover by running this again (`make start`) or rebooting.
+# Hotarun reads channels.yml / tuners.yml / server.yml from --config-dir
+# (or $HOTARUN_CONFIG_DIR). Port defaults to 40772 via server.yml.
 chroot "$ROOTFS" /bin/sh -l -c "
-    export SERVER_CONFIG_PATH=/data/local/tmp/mirakurun/config/server.yml
-    export TUNERS_CONFIG_PATH=/data/local/tmp/mirakurun/config/tuners.yml
-    export CHANNELS_CONFIG_PATH=/data/local/tmp/mirakurun/config/channels.yml
-    export SERVICES_DB_PATH=/data/local/tmp/mirakurun/db/services.json
-    export PROGRAMS_DB_PATH=/data/local/tmp/mirakurun/db/programs.json
-    export LOGO_DATA_DIR_PATH=/data/local/tmp/mirakurun/logo-data
-    cd /data/local/tmp/mirakurun
-    node --max-semi-space-size=32 \
-         --max-old-space-size=256 \
-         lib/server.js
+    export HOTARUN_CONFIG_DIR=/data/local/tmp/hotarun/config
+    cd /data/local/tmp/hotarun
+    /data/local/tmp/hotarun/hotarun --config-dir /data/local/tmp/hotarun/config
 " >> "$LOG" 2>&1
 code=$?
 
-echo "[mirakurun] process exited (code=$code) — not restarting (safe mode)." >> "$LOG"
+echo "[hotarun] process exited (code=$code) — not restarting (safe mode)." >> "$LOG"
 rm -f "$PIDFILE" 2>/dev/null || true
 exit "$code"

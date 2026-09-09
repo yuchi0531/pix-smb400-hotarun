@@ -11,7 +11,7 @@
 # 地デジも MULTI2(B-CAS) スクランブルのため smb400-tuner.sh 内の b21dec で解除する。
 # channel = 物理チャンネル番号(13-62)。IF = 473143 + (ch-13)*6000 kHz。
 # 【重要】物理チャンネル割り当ては地域で異なる。以下は関東(東京)の例。お住まいの
-#         地域に合わせて channel 番号を変更すること。serviceId は省略し、Mirakurun の
+#         地域に合わせて channel 番号を変更すること。serviceId は省略し、Hotarun の
 #         サービススキャンに各局の自動登録を任せる。
 # ※ 本機は衛星のみで未検証。地上波アンテナ接続後、チップが地デジ EMM で Kw を取得
 #    すれば復号可能（一度も地上波を受信していないと当初は視聴不可になり得る）。
@@ -84,7 +84,7 @@
 # --- BS8K (ISDB-S3, 衛星8K, 左旋) ---
 # NHK BS8K。種別は BS4K に混在（同じ ISDB-S3 経路）。channel は実 tlvStreamId=45280
 # （左旋。右旋IFでは受からず以前 "signal absent" として除外されていた値）。
-# Mirakurun は channel を filterTlvStreamId として SDT を選別するため実 tlvStreamId 必須。
+# Hotarun は channel を filterTlvStreamId として SDT を選別するため実 tlvStreamId 必須。
 # smb400-tuner.sh が 45280 を IF 2472MHz にマップする。
 - name: 'BS8K NHK'
   type: BS4K
@@ -93,7 +93,7 @@
 
 # --- BS (ISDB-S, 従来2K衛星, 右旋) ---
 # MULTI2 スクランブルを smb400-tuner.sh 内の b21dec が ACAS チップ経由で解除し、
-# 平文 MPEG-TS を出力（Mirakurun 標準 TSFilter で処理）。
+# 平文 MPEG-TS を出力（Hotarun 標準 TSFilter で処理）。
 # channel=BSxx_y（xx=トランスポンダ番号, _y=相対TS）。IF は xx から、実 TS-ID は
 # smb400-tuner.sh の TS-ID 表（実機 NIT 由来）で解決して tunertest に渡す。
 #
