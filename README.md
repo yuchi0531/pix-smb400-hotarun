@@ -559,3 +559,32 @@ adb -s <デバイスのIPアドレス>:5555 shell "tail -20 /data/local/tmp/cras
 # メモリ確認
 adb -s <デバイスのIPアドレス>:5555 shell "grep MemAvailable /proc/meminfo"
 ```
+
+---
+
+## 元のリポジトリからの変更点
+
+同一リポジトリの Mirakurun 時代の構成を Hotarun に置換したものです。
+
+- Hotarun バイナリ化: Mirakurun (Node.js) から Hotarun ([yuchi0531/Hotarun](https://github.com/yuchi0531/Hotarun)、Mirakurun / MMirakurun 互換の Rust 製シングルバイナリ) に置換。
+- 最新取得: `scripts/fetch-hotarun.sh` (`make fetch-hotarun` / `make deploy-hotarun`) で `releases/latest/download/hotarun-linux-arm32` (+ `.sha256`) を取得・検証。バージョン固定なし。
+- 起動スクリプト化: `scripts/start_hotarun.sh` (手動用) と `boot/initramfs_overlay/start_proxy.sh` (自動起動用) で Alpine ARM32 の chroot 経由で `hotarun --config-dir ...` を起動。
+- Node.js 廃止→gcompat: `node_modules` のデプロイを廃止 (`patches/` は歴史的経緯のみ残置)。`scripts/setup_proot.sh` (`make setup-runtime`) で Alpine minirootfs + `gcompat`・`libstdc++` を導入し、glibc ビルドの Hotarun を実行。
+- sock パス変更: `config/server.yml` の `path` を `/var/run/hotarun.sock` に変更 (`init.pixboot.rc` で `/run`・`/var/run` を用意)。
+- 設定互換維持: `config/tuners.yml`・`channels.yml`・`server.yml` は Mirakurun 互換のまま。`port: 40772` 維持。`tuners.yml` は `tlvDecoder: null` で、復号済み MPEG-TS / TLV をチューナーコマンド内で出力する。
+
+---
+
+## 元の作者さんへの感謝
+
+本プロジェクトは、元のリポジトリの調査・実装 (USB ブートの仕組み、`src/` のチューナー・デスクランブラー群、設定類) の上に成り立っています。
+元の構成を残し、共有してくださった作者の方々に心より感謝いたします。
+本リポジトリの `LICENSE`・`NOTICE` の表示はそのまま維持しています。
+
+- 上流・参考元 (コード・ドキュメント内の記載に基づく):
+  - Hotarun: [yuchi0531/Hotarun](https://github.com/yuchi0531/Hotarun) (MIT)。バイナリは同梱せず、セットアップ時に latest リリースから取得します ([NOTICE](NOTICE) 参照)。
+  - Mirakurun / MMirakurun 互換 API: 設定・API 互換の基盤です。旧構成は Mirakurun-BS4K / Node.js 系 (`patches/node-rs-crc32-index.js` の注記、`@chinachu/aribts` への言及に基づく) を使っていました。
+  - EPGStation フォーク: [tsuyopon123/EPGStation](https://github.com/tsuyopon123/EPGStation) (録画・視聴用)。
+  - mmt/tlv 対応 FFmpeg: [superfashi/FFmpeg](https://github.com/superfashi/FFmpeg) (視聴用)。
+  - OpenSSL: [openssl.org](https://www.openssl.org/) (`b61dec` ビルド用ヘッダのみ同梱、[NOTICE](NOTICE) 参照)。
+- ライセンス: 本リポジトリは Apache-2.0 (`LICENSE`) です。各上流のライセンスに従って利用してください。
