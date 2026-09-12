@@ -1,5 +1,19 @@
 # PIX-SMB400 Hotarun
 
+## このリポジトリについて
+
+このリポジトリは、元は fork でしたが、個人用の変更点が多く、間違って上流リポジトリへプルリクエストを作成するとよくないため、fork を削除したうえで同名の別リポジトリとして作り直したものです。上流へのプルリクエストを目的としたブランチではなく、個人環境での検証・運用用です。
+
+### 個人用の主な変更点
+
+- 地上波（GR）と従来 2K BS の復号経路を `b21dec` 経由に変更
+- 2K BS の TS-ID 対応と `tuner-stream-bs-ng` の使用を追加
+- チューナー終了時に `tuner-stream-ng`、`tuner-stream-bs-ng`、`b21dec`、`tunertest` を停止する処理を追加
+- `scripts/smb400-tuner.sh` と `boot/initramfs_overlay/smb400_tuner.sh` の同期漏れをビルド時に検出
+- 実機で確認した USB ブート、メモリ逼迫、選局後のドロップ、BS/BS4K の切り分け手順を追記
+
+これらは特定の PIX-SMB400、ACAS の状態、受信環境、ファームウェアを前提とした個人用変更です。すべての環境での動作を保証するものではありません。個人用の変更を含むため、内容を確認せずに上流リポジトリへのプルリクエストを作成しないでください。
+
 PIX-SMB400（HiSilicon Hi3798CV200 搭載 Android TV）上で Hotarun（[yuchi0531/Hotarun](https://github.com/yuchi0531/Hotarun)、Mirakurun/MMirakurun 互換の軽量チューナーサーバー）を実行し、地上波（ISDB-T）・BS（ISDB-S）・BS4K / BS8K（ISDB-S3）を受信するためのプロジェクトです。
 
 <img width="1052" height="822" alt="image" src="https://github.com/user-attachments/assets/fd564f7a-a7b6-4b5c-941d-a226162a170c" />
@@ -157,6 +171,8 @@ cd /usb_boot && python3 make_usb_boot.py
 cd ..
 bash boot/build_initramfs.sh _kernel.img.extracted/988000
 ```
+
+> `scripts/` を更新した場合は `boot/initramfs_overlay/` へ同期してから再ビルドしてください（起動毎に `init.pixboot.rc` が `/data/local/tmp/` を上書きするため、`make push-scripts` だけでは再起動で戻ります）。
 
 **1-2. FAT32 でフォーマットする**
 
@@ -559,6 +575,22 @@ adb -s <デバイスのIPアドレス>:5555 shell "tail -20 /data/local/tmp/cras
 # メモリ確認
 adb -s <デバイスのIPアドレス>:5555 shell "grep MemAvailable /proc/meminfo"
 ```
+
+選局後のドロップは次で切り分けます（初回スキャンの取り逃しとは別）:
+
+| 症状 | 確認 | 切分 |
+|------|------|------|
+| `make log` にチューナー系エラー | `make log` | 選局・復号側（Step 7〜9 を再確認） |
+| `crash_guard.log` に reclaim/kill 記録 | `crash_guard.log` + `MemAvailable` | メモリ逼迫（注意事項の閾値を参照） |
+| 上記なしで特定局のみ再現 | 受信環境 | アンテナ・信号側を疑う |
+
+- `dantto` を使う場合は Hotarun 側配置を試してください。
+- 繰返し起動テストで保護ロックした場合は、通常起動で初期化してから復旧してください。
+- デバッグ版・リリース版の混同に注意してください（`make fetch-hotarun` は `latest` リリースを取得します）。
+
+CS/BS 高ビットレートの切分は `top` の比率記録から行います。
+`make log` で `tuner-stream-bs-ng` の 5 秒毎 `throughput` ログを確認します。
+スループット低下は信号・受信側、CPU 張付きはデバイス負荷側を疑います。
 
 ---
 
