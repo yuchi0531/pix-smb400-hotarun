@@ -28,7 +28,7 @@ $HOTARUN_CONFIG_DIR/channels.yml
 "
 missing=""
 for f in $REQUIRED; do
-    [ -e "$f" ] || missing="$missing $f"
+    { [ -e "$f" ] || [ -L "$f" ]; } || missing="$missing $f"
 done
 if [ -n "$missing" ]; then
     echo "[hotarun] not starting — missing file(s):$missing" >> "$LOG"
@@ -57,8 +57,10 @@ export LOG
 sh /data/local/tmp/stop_android_tv.sh
 
 # Kill stale processes from a previous session.
+# NOTE: pattern "hotarun/hotarun" (not bare "hotarun") so pkill -f does not
+# match this script itself (start_proxy.sh) and kill us mid-startup.
 pkill -f "hotarun-proxy" 2>/dev/null || true
-pkill -f "hotarun" 2>/dev/null || true
+pkill -f "hotarun/hotarun" 2>/dev/null || true
 pkill -f "tunertest_oem" 2>/dev/null || true
 pkill -f "tunertest" 2>/dev/null || true
 pkill -f "tuner-stream" 2>/dev/null || true
@@ -127,10 +129,22 @@ fi
 # On this device a crash-looping decoder can spawn a crash_dump32 fork-bomb
 # and brick the box, so we never auto-restart.  If hotarun exits, we log and
 # stop; recover with `make start` or a reboot.
+# Hotarun is a glibc (Ubuntu 24.04, GLIBC_2.39) binary that Alpine's gcompat
+# cannot run (segfaults in the loader stub). Use real glibc armhf libs
+# deployed at /data/local/tmp/glibc-armhf (see setup_proot.sh) instead.
+GLIBC_LD=/data/local/tmp/glibc-armhf/usr/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3
+GLIBC_LIB=/data/local/tmp/glibc-armhf/usr/lib/arm-linux-gnueabihf
+if [ -x "$ROOTFS$GLIBC_LD" ] || [ -x "$GLIBC_LD" ]; then
+    HOTARUN_LAUNCH="$GLIBC_LD --library-path $GLIBC_LIB /data/local/tmp/hotarun/hotarun"
+else
+    echo "[hotarun] warning: $GLIBC_LD missing — falling back to gcompat (likely segfault)." >> "$LOG"
+    HOTARUN_LAUNCH="/data/local/tmp/hotarun/hotarun"
+fi
+export HOTARUN_LAUNCH
 chroot "$ROOTFS" /bin/sh -l -c "
     export HOTARUN_CONFIG_DIR=/data/local/tmp/hotarun/config
     cd /data/local/tmp/hotarun
-    /data/local/tmp/hotarun/hotarun --config-dir /data/local/tmp/hotarun/config
+    $HOTARUN_LAUNCH --config-dir /data/local/tmp/hotarun/config
 " >> "$LOG" 2>&1
 code=$?
 

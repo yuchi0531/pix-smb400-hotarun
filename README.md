@@ -3,14 +3,17 @@
 ## このリポジトリについて
 
 このリポジトリは、元は fork でしたが、個人用の変更点が多く、間違って上流リポジトリへプルリクエストを作成するとよくないため、fork を削除したうえで同名の別リポジトリとして作り直したものです。上流へのプルリクエストを目的としたブランチではなく、個人環境での検証・運用用です。
+動作等保証しないのでお好きにどうぞ。
 
 ### 個人用の主な変更点
 
+- mirakurunを自作の互換サーバhotarunに置き換え。別で集約用のmirakurunがある前提です
 - 地上波（GR）と従来 2K BS の復号経路を `b21dec` 経由に変更
 - 2K BS の TS-ID 対応と `tuner-stream-bs-ng` の使用を追加
 - チューナー終了時に `tuner-stream-ng`、`tuner-stream-bs-ng`、`b21dec`、`tunertest` を停止する処理を追加
 - `scripts/smb400-tuner.sh` と `boot/initramfs_overlay/smb400_tuner.sh` の同期漏れをビルド時に検出
 - 実機で確認した USB ブート、メモリ逼迫、選局後のドロップ、BS/BS4K の切り分け手順を追記
+- 別サーバーからacasを使うためのacas共有サーバ（未検証）
 
 これらは特定の PIX-SMB400、ACAS の状態、受信環境、ファームウェアを前提とした個人用変更です。すべての環境での動作を保証するものではありません。個人用の変更を含むため、内容を確認せずに上流リポジトリへのプルリクエストを作成しないでください。
 
@@ -532,6 +535,144 @@ make start ADB_TARGET=192.168.1.100:5555
 
 ---
 
+## ネットワーク越しB61復号 (arib-b61-stream-test代替・他サーバ用)
+
+他サーバで受信した暗号化raw TLVを、SMB400内のACASで復号して返す方式Dの実装です。
+復号はSMB400内で完結し、master/KCL/Ksを外部・ネットワーク・ログに出しません。
+Mirakurun非依存で、既存 `tuner-stream-bs-ng | b61dec` 経路には影響しません。
+
+```
+[他サーバ] 暗号化raw TLV (stdin)
+  -> b61_net_client --channel XXX (内蔵select-filter: -s/-i/-m/-v, 既定 s=0,i=1,m=0)
+     対象service MPU + ECM + NTP/TLV-SI/CAT/PLT/MPTのみ選択 (順序・TLV境界維持)
+     1チャネル=1TCP, 順序はTCPに委譲, 有界キュー背圧 (外部filter前置も可・冪等)
+  -> [TLS/WireGuard + 短命Tokenは外側で終端する想定]
+  -> [SMB400] b61_net_server (復号後fan-out, 遅client個別切断)
+       <-> acasd (SCI独占, A0/KCL epoch管理, 全APDU直列化,
+                  ECMはepoch+fingerprintでメモリ内キャッシュ)
+       <-> b61dec_worker (b61dec.cからSCI分離, TLV/ECM/復号のみ)
+  -> 復号済みTLVが同一TCPで返送 (echo) + fan-out配信 -> stdout (他サーバ)
+```
+
+互換IF: `stdin=暗号化raw TLV -> stdout=復号済みTLV`、順序・TLV境界維持、
+stdout純粋・ログstderr、先頭バッファリング (8MB/10s)、stdin EOFで残出力して
+exit 0、EMM既定OFF (`-m 0`)、`-m 1` で保持。複数ECM・鍵更新に追従します。
+
+NG (実装で禁止): serviceフィルタ済み入力の復号 (ECM欠きは警告)、復号済み再復号
+(平文入力は警告)、全TLV転送 (`-s` 指定時はMPUを絞る)、ECM-only鍵返却
+(KsはUDS同一UID内のみ、ネットワークに鍵は流さない)。
+
+### ローカルビルド・テスト (実機不要)
+
+```sh
+make build-host   # host gccで5バイナリを build/host にビルド (ADB不要)
+make test-local   # mock鍵による単体・結合テスト (実機・秘密鍵不要)
+make clean-host   # build/host削除
+```
+
+テスト内容 (P0-P6相当をローカルで確認):
+- P0 境界・順序: ランダムTLVを断片化 (`dd bs=17`) してfilter素通しで完全一致
+- P1 選択・ECM保持: `-s 100` で他service MPU除去・ECM/SI保持、`-m 0/1` でEMM除去/保持
+- P2 復号: mock acasd + workerで暗号化MPUが復号 (scr>0 -> scr==0)・ECM保持
+- P3 認証: Token不一致拒否 (serverログ、clientはERRで終了1)、UDSは0600+同一UIDのみ (SO_PEERCRED)
+- P4 fan-out: serverのecho + fanoutが共に復号済み・同数、遅client個別切断 (8MB超過で切断)
+- P5 背圧・EOF: stdin EOFで残出力・exit 0、有界キュー (echo 8MBでupstream停止)
+- P6 長時間相当: 複数ECMキャッシュ (epoch+fingerprint, 16エントリ)・鍵更新追従 (コード・ログで確認)
+- 単体: `b61_net_client --host/--channel` 単体で絞り+復号 (`--channel` は `-s` 別名)、
+  `b61_net_client < enc > dec` (既定値)・断片化同一性・不正`--channel`終了1も確認
+
+### 使い方 (他サーバ)
+
+```sh
+# SMB400側 (実機での起動例。今回は実機デプロイ禁止のため実行しないこと):
+#   acasd --sock /data/local/tmp/.acas.sock &
+#   b61_net_server --listen 40773 --fanout 40774 --acas-sock /data/local/tmp/.acas.sock --token "$B61_TOKEN" &
+
+# 他サーバ側その1 (単体完結。recpt1 -> 復号 -> 出力):
+recpt1 --channel XXX | b61_net_client --host <SMB400_IP> --channel XXX | 出力
+# 例: service 100 のみ (EMM既定OFF)。--channel は -s の別名。
+recpt1 --channel 100 | b61_net_client --host <SMB400_IP> --channel 100 > dec.tlv
+
+# 他サーバ側その2 (ファイル入出力。既定 host=127.0.0.1:40773, s=0,i=1,m=0):
+b61_net_client --host <SMB400_IP> --channel XXX < encrypted.tlv > decrypted.tlv
+b61_net_client < encrypted.tlv > decrypted.tlv
+
+# 互換ラッパー経由 (filter|client を明示。単体と冪等):
+cat enc.tlv | scripts/b61_stream_test_compat.sh -s 0 -i 1 -m 0 \
+  --host <SMB400_IP> --port 40773 --token "$B61_TOKEN" > dec.tlv
+
+# service絞り (例: service 100のみ + EMM破棄):
+cat enc.tlv | scripts/b61_stream_test_compat.sh -s 100 -m 0 \
+  --host <SMB400_IP> --port 40773 --token "$B61_TOKEN" > dec100.tlv
+cat enc.tlv | scripts/b61_stream_test_compat.sh --channel 100 \
+  --host <SMB400_IP> --port 40773 --token "$B61_TOKEN" > dec100.tlv
+
+# ローカルloopback試験 (mock, 実機不要):
+B61_MOCK=1 build/host/acasd --sock /tmp/b61_acas.sock --mock &
+B61_ACAS_SOCK=/tmp/b61_acas.sock build/host/b61_net_server --listen 14073 --fanout 14074 --token test &
+cat enc.tlv | scripts/b61_stream_test_compat.sh -s 100 --host 127.0.0.1 --port 14073 --token test > dec.tlv
+```
+
+#### 遅延・切断・再接続の振る舞い (明確化)
+
+- `b61_net_client` は自動再接続しない。接続失敗・ハンドシェイク拒否
+  (Token不一致は `ERR` で終了1)・送受信エラー・サーバ切断は終了1とし、
+  再接続は上位 (Mirakurun/`recpt1` リトライ/EPGStation/シェルループ) に委譲する。
+- 正常系のみ終了0: stdin EOFで `SHUT_WR` し、復号残を読み切って stdout EOF→exit 0。
+- 下流30秒無受信は stderr に `idle` ログのみ出し待機継続 (切断しない)。
+- MirakurunからのSIGTERM/SIGINTは親が子へ転送し両系速やかに終了 (143/130)。
+  親はstdinを500ms pollで監視し子死亡も検出するためblockせず、必ずwaitpidで
+  reapしゾンビを残さない。SIGPIPEは無視しEPIPEで終了1 (ハングなし)。
+- `b61_net_server` はチャネル単位×1TCP (2つ目のupstreamは `BUSY` 拒否)。
+  複数チャネルは複数プロセス/ポートで運用する。echo滞留8MB超過でupstream
+  読取を一時停止 (dropなし)、fanout遅延は当該のみ個別切断 (8MB/送信不能)。
+
+### Mirakurun decoder用法 (stdin/stdout)
+
+`tuners.yml` で `command` (暗号化raw TLV出力) + `decoder: b61_net_client` と書くと、
+Mirakurunが `tuner stdout→decoder stdin→decoder stdout→配信` とパイプする。
+`b61_net_client` は引数なしでも動く (既定 `s=0,i=1,m=0, host=127.0.0.1:40773, token=none`)。
+互換IFは `arib-b61-stream-test` 準拠 (順序・TLV境界維持、stdout純粋・ログstderr、
+`-s/-i/-m/-v` 互換、ECM/SI保持、EMM既定OFF、EOFで残出力してexit 0、
+Token不一致は終了1、鍵ログなし)。
+
+```yaml
+# config/tuners.yml 記述例1つ (本体は不変。例示のみ。別サーバのMirakurun用):
+- name: SMB400-remote
+  types: [BS4K]
+  command: recpt1 --channel <channel>  # 暗号化raw TLVをstdoutへ
+  decoder: b61_net_client --host <SMB400_IP> --channel 100
+  tlvDecoder: null
+  isDisabled: false
+# decoderなし全素通しも可: decoder: b61_net_client --host <SMB400_IP>
+# env利用例: B61_HOST=<SMB400_IP> B61_TOKEN=xxx b61_net_client --channel 100
+```
+
+- 環境変数 (CLI優先): `B61_HOST` (既定127.0.0.1)、`B61_PORT` (既定40773)、
+  `B61_TOKEN` (既定none=open試験用)。CLI `--host/--port/--token` があれば上書き。
+- 終了コード: `0`=EOF正常、`1`=接続失敗/Token不一致/送受信エラー/不正引数、
+  `143`=SIGTERM、`130`=SIGINT。詳細は `b61_net_client --help` を参照。
+- `src/b61dec.c`・`tuner-stream-*.c`・`smb400-tuner.sh`・`config/tuners.yml` 本体は不変。
+  本改修は `src/b61_net_client.c` のみ (+ tests/README)。
+
+- `--local` を付けるとネットワーク無しで `filter | worker` 動作 (要acasd)。
+- Tokenは `$B61_TOKEN` または `--token`。空/`none` はopen (試験用)。
+- UDSパスは `$B61_ACAS_SOCK` または `--acas-sock` / `--mock-sock` で上書き。
+- 実運用は TLS (stunnel) または WireGuard 上で運用し、Tokenは短命にすること。
+- `src/b61dec.c`・`tuner-stream-bs-ng.c`・`smb400-tuner.sh`・`tuners.yml` は不変。
+  新規は `src/b61_*`・`src/acasd.c`・`scripts/b61_stream_test_compat.sh`・`tests/` のみ。
+
+### 残課題・制限 (ローカル確認済み範囲外)
+
+- 実機SCI結合は未検証 (`--mock` のみ確認)。実機では `acasd` (非mock) + `worker/server`
+  の結合と `stop pix_airtuner` 後の独占確認が別途必要 (今回は実機操作禁止のため未実施)。
+- `-s` のservice->packet_id対応は簡易規則 (`pkt_id == service & 0xFFFF`、MPT学習なし)。
+  MPT完全解析・複数service同時選択は将来対応。MPT自体は保持されるため下流で再選択可。
+- EMM判定はヒューリスティック (`00 00 93 2E` 含有)。実ストリームでの誤検出検証が残る。
+- TLS終端・WireGuard・短命Token運用、複数チャネル (複数serverプロセス/ポート)、
+  長時間・高ビットレート時の背圧チューニングは運用側で確認が必要。
+- `b61_net_server` は単一upstream/プロセス (2つ目はBUSY拒否)。複数チャネルは複数起動で対応。
+
 ## 注意事項
 
 ### OEM サービスと ACAS 競合
@@ -593,5 +734,21 @@ CS/BS 高ビットレートの切分は `top` の比率記録から行います�
 スループット低下は信号・受信側、CPU 張付きはデバイス負荷側を疑います。
 
 
+<<<<<<< HEAD
 
 元リポジトリ作成者のtsuyopon123さんに多大なる感謝を申し上げます。
+=======
+## 謝辞
+
+本プロジェクトは、元のリポジトリの調査・実装の上に成り立っています。
+元の構成を残し、共有してくださった作者の方々に心より感謝いたします。
+本リポジトリの `LICENSE`・`NOTICE` の表示はそのまま維持しています。
+
+- 上流・参考元 (コード・ドキュメント内の記載に基づく):
+  - Hotarun: [yuchi0531/Hotarun](https://github.com/yuchi0531/Hotarun) (MIT)。バイナリは同梱せず、セットアップ時に latest リリースから取得します ([NOTICE](NOTICE) 参照)。
+  - Mirakurun / MMirakurun 互換 API: 設定・API 互換の基盤です。旧構成は Mirakurun-BS4K / Node.js 系 (`patches/node-rs-crc32-index.js` の注記、`@chinachu/aribts` への言及に基づく) を使っていました。
+  - EPGStation フォーク: [tsuyopon123/EPGStation](https://github.com/tsuyopon123/EPGStation) (録画・視聴用)。
+  - mmt/tlv 対応 FFmpeg: [superfashi/FFmpeg](https://github.com/superfashi/FFmpeg) (視聴用)。
+  - OpenSSL: [openssl.org](https://www.openssl.org/) (`b61dec` ビルド用ヘッダのみ同梱、[NOTICE](NOTICE) 参照)。
+- ライセンス: 本リポジトリは Apache-2.0 (`LICENSE`) です。各上流のライセンスに従って利用してください。
+>>>>>>> 13508ed (fix: b21dec PMT継続パケット対応と起動スクリプト修正、glibc-armhfランタイム追加)

@@ -16,6 +16,9 @@
 # ---------- 変更可能な設定 ----------
 # ADB_TARGET 未指定時は adb devices から自動検出
 # 複数台接続時は明示指定: make <target> ADB_TARGET=192.168.1.126:5555
+# host系 (build-host/test-local/clean-host/help) はADB不要のため検出をスキップする。
+_NEED_ADB := $(filter android-libs build-bins push-all push-bins push-scripts push-config fetch-hotarun deploy-hotarun setup-runtime start stop restart log test,$(MAKECMDGOALS))
+ifdef _NEED_ADB
 ifndef ADB_TARGET
   _DETECTED := $(shell adb devices 2>/dev/null | awk '/\tdevice$$/{print $$1}')
   ifeq ($(words $(_DETECTED)),0)
@@ -25,6 +28,7 @@ ifndef ADB_TARGET
   else
     ADB_TARGET := $(_DETECTED)
   endif
+endif
 endif
 ADB        := adb -s $(ADB_TARGET)
 DEVICE_IP  := $(firstword $(subst :, ,$(ADB_TARGET)))
@@ -55,8 +59,15 @@ CFLAGS_ARM   := -march=armv7-a -mfloat-abi=softfp -mfpu=vfpv3 \
                 -Wl,-dynamic-linker,/system/bin/linker \
                 -L$(ANDROID_LIBS) -Wl,-rpath-link,$(ANDROID_LIBS)
 # ------------------------------------
+# ホスト向けビルド (ローカル検証用。ADB/実機不要)
+# 新規ネットワークB61 (arib-b61-stream-test代替) のみ。既存ARMビルドに影響なし。
+CC_HOST      ?= gcc
+CFLAGS_HOST  ?= -Wall -Wextra -O2 -std=c99 -D_GNU_SOURCE
+HOST_BUILDDIR := build/host
+# ------------------------------------
 
 .PHONY: build-bins android-libs \
+        build-host test-local clean-host \
         push-all push-bins push-scripts push-config \
         fetch-hotarun deploy-hotarun setup-runtime \
         start stop restart log test help
@@ -106,6 +117,33 @@ build-bins: android-libs
 	    $(ANDROID_LIBS)/libc.so $(ANDROID_LIBS)/libdl.so $(ANDROID_LIBS)/ld-android.so \
 	    -o bin/b21dec
 	@echo "[+] Built bin/tuner-stream-ng, tuner-stream-bs-ng, b61dec, tuner-stream-bs, b21dec"
+
+# ---- ホスト向けビルド (ローカル検証用。ADB/実機不要) ----
+# 新規ネットワークB61 (arib-b61-stream-test代替) のみをhost gccでビルド。
+# b61_net_clientは他サーバ単体 + Mirakurun decoder (stdin/stdout) 兼用。
+# 既存ARMビルド・デプロイ系ターゲットには一切触れない。
+
+build-host:
+	@mkdir -p $(HOST_BUILDDIR)
+	@echo "[*] Building b61_select_filter (host)..."
+	$(CC_HOST) $(CFLAGS_HOST) src/b61_select_filter.c -o $(HOST_BUILDDIR)/b61_select_filter
+	@echo "[*] Building b61_net_client (host, Mirakurun decoder兼用)..."
+	$(CC_HOST) $(CFLAGS_HOST) src/b61_net_client.c -o $(HOST_BUILDDIR)/b61_net_client
+	@echo "[*] Building acasd (host)..."
+	$(CC_HOST) $(CFLAGS_HOST) src/acasd.c -lcrypto -ldl -o $(HOST_BUILDDIR)/acasd
+	@echo "[*] Building b61dec_worker (host)..."
+	$(CC_HOST) $(CFLAGS_HOST) src/b61dec_worker.c -lcrypto -o $(HOST_BUILDDIR)/b61dec_worker
+	@echo "[*] Building b61_net_server (host)..."
+	$(CC_HOST) $(CFLAGS_HOST) src/b61_net_server.c -lcrypto -o $(HOST_BUILDDIR)/b61_net_server
+	@chmod +x scripts/b61_stream_test_compat.sh tests/*.sh
+	@echo "[+] Built $(HOST_BUILDDIR)/b61_select_filter, b61_net_client, acasd, b61dec_worker, b61_net_server"
+
+test-local: build-host
+	@echo "[*] Running local network-B61 tests (no device, mock keys)..."
+	bash tests/run_all.sh
+
+clean-host:
+	rm -rf build/host
 
 # ---- デプロイ ----
 
@@ -236,6 +274,9 @@ help:
 	@echo "  make restart           再起動"
 	@echo "  make log               ログ確認 (tail -50)"
 	@echo "  make test              BS4K ストリーム疎通テスト"
+	@echo "  make build-host        hostビルド (ADB不要・network B61)"
+	@echo "  make test-local        ローカルテスト (mock鍵・実機不要)"
+	@echo "  make clean-host        build/host削除"
 	@echo ""
 	@echo "デフォルト接続先: $(ADB_TARGET)"
 	@echo "変更: make start ADB_TARGET=192.168.1.100:5555"

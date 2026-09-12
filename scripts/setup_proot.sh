@@ -62,6 +62,39 @@ exit $RC
 '
 
 echo ""
+echo "=== Step 5: Deploy real glibc armhf (Hotarun needs GLIBC_2.39+) ==="
+# Hotarun is built on Ubuntu 24.04 and needs GLIBC_2.39, but Alpine's gcompat
+# (1.1.0) cannot run it (segfaults in the loader stub). Deploy real glibc
+# armhf libs; start_hotarun.sh / start_proxy.sh invoke Hotarun via the
+# explicit loader in $DEVICE_TMP/glibc-armhf.
+GLIBC_DIR="$WORK_DIR/glibc-armhf"
+mkdir -p "$GLIBC_DIR"
+if [ -f "$GLIBC_DIR/usr/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3" ]; then
+    echo "[*] Reusing existing $GLIBC_DIR"
+else
+    echo "[*] Downloading libc6:armhf + libgcc-s1:armhf from Ubuntu ports..."
+    APT_OPTS="-o Dir::Etc::sourcelist=/tmp/smb400_armhf.sources \
+              -o Dir::Etc::sourceparts=/dev/null \
+              -o Dir::State::Lists=$WORK_DIR/armhf-lists \
+              -o Dir::Cache=$WORK_DIR/armhf-cache \
+              -o Debug::NoLocking=1 \
+              -o APT::Architecture=armhf -o APT::Architectures=armhf"
+    mkdir -p "$WORK_DIR/armhf-lists/partial" "$WORK_DIR/armhf-cache/archives/partial"
+    echo "deb [arch=armhf] http://ports.ubuntu.com/ubuntu-ports $(lsb_release -cs 2>/dev/null || echo resolute) main" \
+        > /tmp/smb400_armhf.sources
+    # shellcheck disable=SC2086
+    apt-get $APT_OPTS update 2>&1 | tail -1
+    # shellcheck disable=SC2086
+    (cd "$WORK_DIR" && apt-get $APT_OPTS download libc6:armhf libgcc-s1:armhf 2>&1 | tail -2)
+    dpkg-deb -x "$WORK_DIR"/libc6_*_armhf.deb "$GLIBC_DIR"
+    dpkg-deb -x "$WORK_DIR"/libgcc-s1_*_armhf.deb "$GLIBC_DIR"
+    rm -f /tmp/smb400_armhf.sources
+fi
+echo "[*] Pushing glibc-armhf to device..."
+$ADB push "$GLIBC_DIR" "$DEVICE_TMP/glibc-armhf"
+$ADB shell "chroot '$ROOTFS_DIR' '$DEVICE_TMP/glibc-armhf/usr/lib/arm-linux-gnueabihf/ld-linux-armhf.so.3' --library-path '$DEVICE_TMP/glibc-armhf/usr/lib/arm-linux-gnueabihf' '$DEVICE_TMP/hotarun/hotarun' 2>&1 | head -2 || true"
+
+echo ""
 echo "=== Setup complete ==="
 echo "Hotarun preflight (Alpine + gcompat ready):"
 $ADB shell "chroot '$ROOTFS_DIR' /bin/sh -c 'export PATH=/usr/sbin:/usr/bin:/sbin:/bin; ls /lib/libgcompat* 2>/dev/null || echo gcompat-installed'"
